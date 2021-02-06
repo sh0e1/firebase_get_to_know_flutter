@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -81,8 +82,10 @@ class HomePage extends StatelessWidget {
                 if (appState.loginState == ApplicationLoginState.loggedIn) ...[
                   Header('Discussion'),
                   GuestBook(
-                      addMessage: (String message) =>
-                          appState.addMessageToGuestBook(message)),
+                    addMessage: (String message) =>
+                        appState.addMessageToGuestBook(message),
+                    messages: appState.guestBookMessages,
+                  ),
                 ],
               ],
             ),
@@ -104,8 +107,23 @@ class ApplicationState extends ChangeNotifier {
     FirebaseAuth.instance.userChanges().listen((user) {
       if (user != null) {
         _loginState = ApplicationLoginState.loggedIn;
+        _guestBookSubscription = FirebaseFirestore.instance
+            .collection('guestbook')
+            .orderBy('timestamp', descending: true)
+            .snapshots()
+            .listen((snapshot) {
+          _guestBookMessages = [];
+          snapshot.docs.forEach((document) {
+            _guestBookMessages.add(GuestBookMessage(
+                name: document.data()['name'],
+                message: document.data()['text']));
+          });
+          notifyListeners();
+        });
       } else {
         _loginState = ApplicationLoginState.loggedOut;
+        _guestBookMessages = [];
+        _guestBookSubscription?.cancel();
       }
       notifyListeners();
     });
@@ -116,6 +134,10 @@ class ApplicationState extends ChangeNotifier {
 
   String _email;
   String get email => _email;
+
+  StreamSubscription<QuerySnapshot> _guestBookSubscription;
+  List<GuestBookMessage> _guestBookMessages = [];
+  List<GuestBookMessage> get guestBookMessages => _guestBookMessages;
 
   void startLoginFlow() {
     _loginState = ApplicationLoginState.emailAddress;
@@ -188,9 +210,16 @@ class ApplicationState extends ChangeNotifier {
   }
 }
 
+class GuestBookMessage {
+  GuestBookMessage({@required this.name, @required this.message});
+  final String name;
+  final String message;
+}
+
 class GuestBook extends StatefulWidget {
-  GuestBook({@required this.addMessage});
+  GuestBook({@required this.addMessage, @required this.messages});
   final Future<void> Function(String message) addMessage;
+  final List<GuestBookMessage> messages;
 
   @override
   _GuestBookState createState() => _GuestBookState();
@@ -202,43 +231,53 @@ class _GuestBookState extends State<GuestBook> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(8.0),
-      child: Form(
-        key: _fromKey,
-        child: Row(
-          children: [
-            Expanded(
-              child: TextFormField(
-                controller: _controller,
-                decoration: const InputDecoration(hintText: 'Leave a message'),
-                validator: (value) {
-                  if (value.isEmpty) {
-                    return 'Enter your message to continue';
-                  }
-                  return null;
-                },
-              ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Form(
+            key: _fromKey,
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _controller,
+                    decoration:
+                        const InputDecoration(hintText: 'Leave a message'),
+                    validator: (value) {
+                      if (value.isEmpty) {
+                        return 'Enter your message to continue';
+                      }
+                      return null;
+                    },
+                  ),
+                ),
+                SizedBox(width: 8),
+                StyledButton(
+                  child: Row(
+                    children: [
+                      Icon(Icons.send),
+                      SizedBox(width: 4),
+                      Text('SEND'),
+                    ],
+                  ),
+                  onPressed: () async {
+                    if (_fromKey.currentState.validate()) {
+                      await widget.addMessage(_controller.text);
+                      _controller.clear();
+                    }
+                  },
+                ),
+              ],
             ),
-            SizedBox(width: 8),
-            StyledButton(
-              child: Row(
-                children: [
-                  Icon(Icons.send),
-                  SizedBox(width: 4),
-                  Text('SEND'),
-                ],
-              ),
-              onPressed: () async {
-                if (_fromKey.currentState.validate()) {
-                  await widget.addMessage(_controller.text);
-                  _controller.clear();
-                }
-              },
-            ),
-          ],
+          ),
         ),
-      ),
+        SizedBox(height: 8),
+        for (var message in widget.messages)
+          Paragraph('${message.name}: ${message.message}'),
+        SizedBox(height: 8),
+      ],
     );
   }
 }
